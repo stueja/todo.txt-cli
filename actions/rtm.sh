@@ -39,9 +39,18 @@ usage(){
 	exit 1
 }
 
+urlencode(){
+	#echo "$@" | sed 's/ /%20/g;s/!/%21/g;s/"/%22/g;s/#/%23/g;s/\$/%24/g;s/%/%25/g;s/\&/%26/g;s/'\''/%27/g;s/(/%28/g;s/)/%29/g;s/:/%3A/g'
+	cat /dev/stdin | sed 's/ /%20/g;s/!/%21/g;s/"/%22/g;s/#/%23/g;s/\$/%24/g;s/\&/%26/g;s/'\''/%27/g;s/(/%28/g;s/)/%29/g;s/:/%3A/g'
+}
+
+urldecode(){
+	cat /dev/stdin | sed 's/%20/ /g;s/%21/!/g;s/%22/"/g;s/%23/#/g;s/%24/\$/g;s/%25/%/g;s/%26/\&/g;s/%27/'\''/g;s/%28/(/g;s/%29/)/g;s/%3A/:/g'
+}
+
 get_sig(){
 	# no brief option in md5sum ?
-	echo -n $shared_secret$(echo "$args" | tr '&' '\n' | sort | tr -d '\n' | tr -d '=') | md5sum | cut -d' ' -f1
+	echo -n $shared_secret$(echo "$args" | urldecode | tr '&' '\n' | sort | tr -d '\n' | tr -d '=') | md5sum | cut -d' ' -f1
 }
 
 login_rtm(){
@@ -111,7 +120,8 @@ push(){
 
 	cat $TODO_FILE | while read line
 	do
-		if [ $(check_does_exist_on_rtm "$token" "$line") == 1 ] # does exist
+		# does exist
+		if [ ! -z "$(check_does_exist_on_rtm "$token" "$line")" ]
 		then
 			echo "'$line' exists not adding"
 			continue
@@ -120,7 +130,7 @@ push(){
 			args="method=rtm.timelines.create&auth_token=$token&api_key=$api_key"
 			api_sig=$(get_sig "$args")
 			url="$rtm_api?$args&api_sig=$api_sig"
-			timeline=$(curl -s "$url" | sed 's|^<rsp stat="ok"><timeline>\(.*\)</timeline></rsp>$|\1|p')
+			timeline=$(curl -s "$url" | sed -n 's|^<rsp stat="ok"><timeline>\(.*\)</timeline></rsp>$|\1|p')
 
 			# http://www.rememberthemilk.com/services/api/methods/rtm.tasks.add.rtm
 			# optional: parse, list_id
@@ -128,11 +138,12 @@ push(){
 
 			echo "Adding '$line' to Remember the Milk"
 
-			args="method=rtm.tasks.add&name=$line&timeline=$timeline&auth_token=$token&api_key=$api_key"
+			args="method=rtm.tasks.add&name=$(echo "$line" | urlencode)&timeline=$timeline&auth_token=$token&api_key=$api_key"
+			#args="method=rtm.tasks.add&name=$line&timeline=$timeline&auth_token=$token&api_key=$api_key"
 			api_sig=$(get_sig "$args")
 			url="$rtm_api?$args&api_sig=$api_sig"
 
-			curl -s "$url"
+			curl -s "$url" &> /dev/null
 		fi
 	done
 
@@ -192,14 +203,14 @@ pull(){
 		then
 			if ! grep -q "$name" $TODO_FILE # it is not on the todo file
 			then
-				echo "Adding $name to $TODO_FILE"
+				echo "Adding $name to todo file"
 				echo "$name" | tee -a "$TODO_FILE" > /dev/null
 				# $TODO_SH add "$name"
 			fi
 		else
 			if ! grep -q "$name" $DONE_FILE # it is not on the done file
 			then
-				echo "Adding $name to $DONE_FILE"
+				echo "Adding $name to done file"
 				echo "$name" | tee -a "$DONE_FILE" > /dev/null # it might be safer to use the interface
 				# $TODO_SH add "$name"
 			fi
