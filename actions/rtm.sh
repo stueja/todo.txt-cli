@@ -81,41 +81,59 @@ login_rtm(){
 	token=$(curl -s "$url" | sed -rn 's|^<rsp stat="ok"><auth><token>(.*)</token><perms>'$perm'</perms><user id="(.*)" username="(.*)" fullname="(.*)"/></auth></rsp>$|\1|p')
 }
 
-push(){
-	login_rtm 'write' # gets token
-
-	source "$todo_cfg"
-
-	# this is a blind add and does not know if it exists on the other end
-
-	cat $TODO_FILE | while read line
-	do
-		# http://www.rememberthemilk.com/services/api/methods/rtm.timelines.create.rtm
-		args="method=rtm.timelines.create&auth_token=$token&api_key=$api_key"
-		api_sig=$(get_sig "$args")
-		url="$rtm_api?$args&api_sig=$api_sig"
-		timeline=$(curl -s "$url" | sed 's|^<rsp stat="ok"><timeline>\(.*\)</timeline></rsp>$|\1|p')
+check_does_exist_on_rtm(){
+		token="$1"
+		filter="$2"
 
 		# http://www.rememberthemilk.com/services/api/methods/rtm.tasks.getList.rtm
 		#filter=$(echo "name:$line" | sed 's/ /%20/g;s/!/%21/g;s/"/%22/g;s/#/%23/g;s/\$/%24/g;s/%/%25/g;s/\&/%26/g;s/'\''/%27/g;s/(/%28/g;s/)/%29/g;s/:/%3A/g')
 		#echo "$filter"
 		#args="method=rtm.tasks.getList&filter=$filter&auth_token=$token&api_key=$api_key"
-		#api_sig=$(get_sig "$args")
-		#url="$rtm_api?$args&api_sig=$api_sig"
-		#echo "$url"
-		#curl -s "$url"
-
-		# http://www.rememberthemilk.com/services/api/methods/rtm.tasks.add.rtm
-		# optional: parse, list_id
-		# if parse=1 then "SmartAdd" will be used; that has RTM interpret natural language
-
-		echo "Adding $line to Remember the Milk"
-
-		args="method=rtm.tasks.add&name=$line&timeline=$timeline&auth_token=$token&api_key=$api_key"
+		args="method=rtm.tasks.getList&auth_token=$token&api_key=$api_key"
 		api_sig=$(get_sig "$args")
 		url="$rtm_api?$args&api_sig=$api_sig"
+		curl -s "$url" | sed 's|<taskseries|\n<taskseries|g' | grep '<taskseries' | sed 's|</list></tasks></rsp>||' |
+		while read line
+		do
+			name="$(echo "$line" | sed -rn 's|^<taskseries id=".*" created=".*" modified=".*" name="(.*)" source=".*" url=".*" location_id=".*"><tags.*/><participants.*/><notes.*/><task id=".*" due=".*" has_due_time=".*" added=".*" completed=".*" deleted=".*" priority=".*" postponed=".*" estimate=".*"/></taskseries>$|\1|p')"
+			if [[ "$name" == "$filter" ]]
+			then
+				echo 1
+				break
+			fi
+		done
+}
 
-		curl -s "$url"
+push(){
+	login_rtm 'write' # gets token
+
+	source "$todo_cfg"
+
+	cat $TODO_FILE | while read line
+	do
+		if [ $(check_does_exist_on_rtm "$token" "$line") == 1 ] # does exist
+		then
+			echo "'$line' exists not adding"
+			continue
+		else
+			# http://www.rememberthemilk.com/services/api/methods/rtm.timelines.create.rtm
+			args="method=rtm.timelines.create&auth_token=$token&api_key=$api_key"
+			api_sig=$(get_sig "$args")
+			url="$rtm_api?$args&api_sig=$api_sig"
+			timeline=$(curl -s "$url" | sed 's|^<rsp stat="ok"><timeline>\(.*\)</timeline></rsp>$|\1|p')
+
+			# http://www.rememberthemilk.com/services/api/methods/rtm.tasks.add.rtm
+			# optional: parse, list_id
+			# if parse=1 then "SmartAdd" will be used; that has RTM interpret natural language
+
+			echo "Adding '$line' to Remember the Milk"
+
+			args="method=rtm.tasks.add&name=$line&timeline=$timeline&auth_token=$token&api_key=$api_key"
+			api_sig=$(get_sig "$args")
+			url="$rtm_api?$args&api_sig=$api_sig"
+
+			curl -s "$url"
+		fi
 	done
 
 	#cat $TODO_DONE | while read line
@@ -176,22 +194,25 @@ pull(){
 			then
 				echo "Adding $name to $TODO_FILE"
 				echo "$name" | tee -a "$TODO_FILE" > /dev/null
+				# $TODO_SH add "$name"
 			fi
 		else
 			if ! grep -q "$name" $DONE_FILE # it is not on the done file
 			then
 				echo "Adding $name to $DONE_FILE"
 				echo "$name" | tee -a "$DONE_FILE" > /dev/null # it might be safer to use the interface
+				# $TODO_SH add "$name"
 			fi
 		fi
 	done
 }
 
-if [ -z "$1" ]
+if [ -z "$@" ]
 then
 	usage
 	exit
 fi
+
 
 while true; do
 	case "$1" in
