@@ -53,7 +53,23 @@ get_sig(){
 	echo -n $shared_secret$(echo "$args" | urldecode | tr '&' '\n' | sort | tr -d '\n' | tr -d '=') | md5sum | cut -d' ' -f1
 }
 
-login_rtm(){
+ask_for_authentication(){
+	url="$1"
+	if $(which xdg-open >/dev/null 2>&1)
+	then
+		echo "We are now opening this url with xdg-open."
+		echo "$url"
+		xdg-open "$url" &> /dev/null &
+	else
+		echo "You don't have xdg-open installed (or at least it wasn't detected)"
+		echo "Please open the url manually."
+		echo "$url"
+	fi
+
+	read -p "Press any key when you have authorized this application..."
+}
+
+get_token(){
 	perm="$1";
 
 	# http://www.rememberthemilk.com/services/api/methods/rtm.auth.getFrob.rtm
@@ -68,26 +84,25 @@ login_rtm(){
 	api_sig=$(get_sig "$args")
 	url="http://www.rememberthemilk.com/services/auth/?$args&api_sig=$api_sig"
 
-	if $(which xdg-open >/dev/null 2>&1)
-	then
-		echo "We are now opening this url with xdg-open."
-		echo "$url"
-		xdg-open "$url" &> /dev/null &
-	else
-		echo "You don't have xdg-open installed (or at least it wasn't detected)"
-		echo "Please open the url manually."
-		echo "$url"
-	fi
-
-	read -p "Press any key when you have authorized this application..."
-
 	# http://www.rememberthemilk.com/services/api/methods/rtm.auth.getToken.rtm
 	args="method=rtm.auth.getToken&frob=$frob&api_key=$api_key"
 	api_sig=$(get_sig "$args")
 	url="$rtm_api?$args&api_sig=$api_sig"
 
+	echo "$url"
+
 	#eval $(curl -s "$url" | sed -rn 's|^<rsp stat="ok"><auth><token>(.*)</token><perms>'$perm'</perms><user id="(.*)" username="(.*)" fullname="(.*)"/></auth></rsp>$|token=\1;id=\2;username=\3;fullname="\4"|p')
 	token=$(curl -s "$url" | sed -rn 's|^<rsp stat="ok"><auth><token>(.*)</token><perms>'$perm'</perms><user id="(.*)" username="(.*)" fullname="(.*)"/></auth></rsp>$|\1|p')
+}
+
+login_rtm(){
+	#token="$(get_token "$1")"
+
+	#if [ -z "$token" ]
+	#then
+	ask_for_authentication "$url"
+	token="$(get_token "$1")"
+	#fi
 }
 
 check_does_exist_on_rtm(){
@@ -113,13 +128,43 @@ check_does_exist_on_rtm(){
 		done
 }
 
+check_is_complete_on_rtm(){
+		token="$1"
+		filter="$2"
+
+		# http://www.rememberthemilk.com/services/api/methods/rtm.tasks.getList.rtm
+		#filter=$(echo "name:$line" | sed 's/ /%20/g;s/!/%21/g;s/"/%22/g;s/#/%23/g;s/\$/%24/g;s/%/%25/g;s/\&/%26/g;s/'\''/%27/g;s/(/%28/g;s/)/%29/g;s/:/%3A/g')
+		#echo "$filter"
+		#args="method=rtm.tasks.getList&filter=$filter&auth_token=$token&api_key=$api_key"
+		args="method=rtm.tasks.getList&auth_token=$token&api_key=$api_key"
+		api_sig=$(get_sig "$args")
+		url="$rtm_api?$args&api_sig=$api_sig"
+		curl -s "$url" | sed 's|<taskseries|\n<taskseries|g' | grep '<taskseries' | sed 's|</list></tasks></rsp>||' |
+		while read line
+		do
+			name="$(echo "$line" | sed -rn 's|^<taskseries id=".*" created=".*" modified=".*" name="(.*)" source=".*" url=".*" location_id=".*"><tags.*/><participants.*/><notes.*/><task id=".*" due=".*" has_due_time=".*" added=".*" completed="(.*)" deleted=".*" priority=".*" postponed=".*" estimate=".*"/></taskseries>$|\1|p')"
+			completed="$(echo "$line" | sed -rn 's|^<taskseries id=".*" created=".*" modified=".*" name=".*" source=".*" url=".*" location_id=".*"><tags.*/><participants.*/><notes.*/><task id=".*" due=".*" has_due_time=".*" added=".*" completed="(.*)" deleted=".*" priority=".*" postponed=".*" estimate=".*"/></taskseries>$|\1|p')"
+			if [[ "$name" == "$filter" ]] && [[ ! -z "$completed" ]]
+			then
+				echo 1
+				break
+			fi
+		done
+}
+
 push(){
+	#token=$(login_rtm 'write')
 	login_rtm 'write' # gets token
 
 	source "$todo_cfg"
 
 	cat $TODO_FILE | while read line
 	do
+		if [ -z "$line" ]
+		then
+			continue
+		fi
+
 		# does exist
 		if [ ! -z "$(check_does_exist_on_rtm "$token" "$line")" ]
 		then
@@ -147,39 +192,60 @@ push(){
 		fi
 	done
 
-	#cat $TODO_DONE | while read line
-	#do
-	#	# http://www.rememberthemilk.com/services/api/methods/rtm.timelines.create.rtm
-	#	args="method=rtm.timelines.create&auth_token=$token&api_key=$api_key"
-	#	api_sig=$(get_sig "$args")
-	#	url="$rtm_api?$args&api_sig=$api_sig"
-	#	timeline=$(curl -s "$url" | sed 's|^<rsp stat="ok"><timeline>\(.*\)</timeline></rsp>$|\1|p')
+	cat $DONE_FILE | while read line
+	do
+		if [ -z "$line" ]
+		then
+			continue
+		fi
 
-		# http://www.rememberthemilk.com/services/api/methods/rtm.tasks.getList.rtm
-	#	args="method=rtm.tasks.getList&filter=name%3A$line&auth_token=$token&api_key=$api_key"
-	#	api_sig=$(get_sig "$args")
-	#	url="$rtm_api?$args&api_sig=$api_sig"
+		line="$(echo "$line" | sed 's/x [0-9]*-[0-9]*-[0-9]* \(.*\)/\1/')"
 
-	#	curl -s "$url"
+		# does exist
+		if [ ! -z "$(check_is_complete_on_rtm "$token" "$line")" ]
+		then
+			echo "'$line' is already complete"
+			continue
+		else
+			# http://www.rememberthemilk.com/services/api/methods/rtm.timelines.create.rtm
+			args="method=rtm.timelines.create&auth_token=$token&api_key=$api_key"
+			api_sig=$(get_sig "$args")
+			url="$rtm_api?$args&api_sig=$api_sig"
+			timeline=$(curl -s "$url" | sed -n 's|^<rsp stat="ok"><timeline>\(.*\)</timeline></rsp>$|\1|p')
 
-		# http://www.rememberthemilk.com/services/api/methods/rtm.tasks.add.rtm
-		# optional: parse, list_id
-		# if parse=1 then "SmartAdd" will be used; that has RTM interpret natural language
+			# http://www.rememberthemilk.com/services/api/methods/rtm.tasks.add.rtm
+			# optional: parse, list_id
+			# if parse=1 then "SmartAdd" will be used; that has RTM interpret natural language
 
-	#	echo "Adding $line"
+			echo "Completing '$line'"
 
-	#	args="method=rtm.tasks.add&name=$line&timeline=$timeline&auth_token=$token&api_key=$api_key"
-	#	api_sig=$(get_sig "$args")
-	#	url="$rtm_api?$args&api_sig=$api_sig"
-
-	#	exit 1
-
-	#	curl -s "$url"
-	#done	
+			args="method=rtm.tasks.getList&auth_token=$token&api_key=$api_key"
+			api_sig=$(get_sig "$args")
+			url="$rtm_api?$args&api_sig=$api_sig"
+			data="$(curl -s "$url")"
+			list_id=$(echo "$data" | sed -rn 's/<list id="([0-9]*)">/\1/p')
+			echo "$data" | sed 's|<taskseries|\n<taskseries|g' | grep '<taskseries' | sed 's|</list></tasks></rsp>||' |
+			while read line2
+			do
+				name="$(echo "$line2" | sed -rn 's|^<taskseries id=".*" created=".*" modified=".*" name="(.*)" source=".*" url=".*" location_id=".*"><tags.*/><participants.*/><notes.*/><task id=".*" due=".*" has_due_time=".*" added=".*" completed=".*" deleted=".*" priority=".*" postponed=".*" estimate=".*"/></taskseries>$|\1|p')"
+				if [[ "$name" == "$line" ]]
+				then
+					taskseries_id="$(echo "$line2" | sed -rn 's|^<taskseries id="(.*)" created=".*" modified=".*" name=".*" source=".*" url=".*" location_id=".*"><tags.*/><participants.*/><notes.*/><task id=".*" due=".*" has_due_time=".*" added=".*" completed=".*" deleted=".*" priority=".*" postponed=".*" estimate=".*"/></taskseries>$|\1|p')"
+					task_id="$(echo "$line2" | sed -rn 's|^<taskseries id=".*" created=".*" modified=".*" name=".*" source=".*" url=".*" location_id=".*"><tags.*/><participants.*/><notes.*/><task id="(.*)" due=".*" has_due_time=".*" added=".*" completed=".*" deleted=".*" priority=".*" postponed=".*" estimate=".*"/></taskseries>$|\1|p')"
+					args="method=rtm.tasks.complete&task_id=$task_id&list_id=$list_id&timeline=$timeline&taskseries_id=$taskseries_id&auth_token=$token&api_key=$api_key"
+					api_sig=$(get_sig "$args")
+					url="$rtm_api?$args&api_sig=$api_sig"
+					curl -s "$url" &> /dev/null
+					break
+				fi
+			done
+		fi
+	done
 }
 
 pull(){
-	login_rtm 'read' # gets token
+	#token=$(login_rtm 'write')
+	login_rtm 'write' # gets token
 
 	source "$todo_cfg"
 
@@ -211,8 +277,9 @@ pull(){
 			if ! grep -q "$name" $DONE_FILE # it is not on the done file
 			then
 				echo "Adding $name to done file"
-				echo "$name" | tee -a "$DONE_FILE" > /dev/null # it might be safer to use the interface
-				# $TODO_SH add "$name"
+				date=$(echo "$complete" | sed -rn 's/^(.*)T.*Z$/\1/p')
+				echo "x $date $name" | tee -a "$DONE_FILE" > /dev/null # it might be safer to use the interface
+				# $TODO_SH add "$name" && $TODO_SH do "$name"
 			fi
 		fi
 	done
