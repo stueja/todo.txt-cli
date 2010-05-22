@@ -70,7 +70,7 @@ ask_for_authentication(){
 }
 
 get_token(){
-	perm="$1";
+	perm="$1"
 
 	# http://www.rememberthemilk.com/services/api/methods/rtm.auth.getFrob.rtm
 	args="method=rtm.auth.getFrob&api_key=$api_key"
@@ -89,20 +89,28 @@ get_token(){
 	api_sig=$(get_sig "$args")
 	url="$rtm_api?$args&api_sig=$api_sig"
 
-	echo "$url"
-
+	curl -s "$url"
 	#eval $(curl -s "$url" | sed -rn 's|^<rsp stat="ok"><auth><token>(.*)</token><perms>'$perm'</perms><user id="(.*)" username="(.*)" fullname="(.*)"/></auth></rsp>$|token=\1;id=\2;username=\3;fullname="\4"|p')
 	token=$(curl -s "$url" | sed -rn 's|^<rsp stat="ok"><auth><token>(.*)</token><perms>'$perm'</perms><user id="(.*)" username="(.*)" fullname="(.*)"/></auth></rsp>$|\1|p')
+	echo "$token"
 }
 
 login_rtm(){
-	#token="$(get_token "$1")"
-
-	#if [ -z "$token" ]
-	#then
-	ask_for_authentication "$url"
 	token="$(get_token "$1")"
-	#fi
+
+	if [ -z "$token" ]
+	then
+		args="method=rtm.auth.getFrob&api_key=$api_key"
+		api_sig=$(get_sig "$args")
+		url="$rtm_api?$args&api_sig=$api_sig"
+		frob=$(curl -s "$url" | sed -rn 's|^<rsp stat="ok"><frob>(.*)</frob></rsp>$|\1|p')
+		args="perms=$1&frobs=$frob&api_key=$api_key"
+		api_sig=$(get_sig "$args")
+		url="http://www.rememberthemilk.com/services/auth/?$args&api_sig=$api_sig"
+		ask_for_authentication "$url"
+		token="$(get_token "$1")"
+	fi
+	echo $token
 }
 
 check_does_exist_on_rtm(){
@@ -188,7 +196,8 @@ push(){
 			api_sig=$(get_sig "$args")
 			url="$rtm_api?$args&api_sig=$api_sig"
 
-			curl -s "$url" &> /dev/null
+			#curl -s "$url" &> /dev/null
+			curl -s "$url"
 		fi
 	done
 
@@ -235,7 +244,8 @@ push(){
 					args="method=rtm.tasks.complete&task_id=$task_id&list_id=$list_id&timeline=$timeline&taskseries_id=$taskseries_id&auth_token=$token&api_key=$api_key"
 					api_sig=$(get_sig "$args")
 					url="$rtm_api?$args&api_sig=$api_sig"
-					curl -s "$url" &> /dev/null
+					#curl -s "$url" &> /dev/null
+					curl -s "$url"
 					break
 				fi
 			done
